@@ -1,444 +1,542 @@
 #include <iostream>
+#include <sys/ipc.h>
+#include <sys/shm.h>
+#include <cstring>
+#include <unistd.h>
+#include <cstdlib>
+#include <fstream>
 #include <string>
 #include <vector>
-#include <sstream>
-#include <winsock2.h>
-#include <ws2tcpip.h>
-#include "structures.h"
+#include <fcntl.h>
+#include <ctime>
+#include<thread>
+#include<semaphore.h>
+#include "seatmatrix.h"
+#include <arpa/inet.h>
+#include <sys/socket.h>
 
-#pragma comment(lib, "ws2_32.lib")
 
-class MovieBookingClient {
-private:
-    SOCKET client_socket;
-    std::string server_ip;
-    int server_port;
-    int user_id;
-    UserType user_type;
-    bool is_authenticated;
-    
-    std::vector<std::string> split(const std::string& str, char delimiter) {
-        std::vector<std::string> tokens;
-        std::stringstream ss(str);
-        std::string token;
-        while (std::getline(ss, token, delimiter)) {
-            tokens.push_back(token);
-        }
-        return tokens;
-    }
-    
-    std::string sendRequest(const std::string& request) {
-        send(client_socket, request.c_str(), request.length(), 0);
-        
-        char buffer[4096];
-        memset(buffer, 0, sizeof(buffer));
-        int bytes_received = recv(client_socket, buffer, sizeof(buffer) - 1, 0);
-        
-        if (bytes_received > 0) {
-            return std::string(buffer);
-        }
-        return "";
-    }
-    
-    void displayMovies() {
-        std::string response = sendRequest("VIEW_MOVIES");
-        auto parts = split(response, '|');
-        
-        if (parts.size() >= 2 && parts[0] == "MOVIES") {
-            std::cout << "\n=== Available Movies ===\n";
-            std::cout << "ID\tMovie Name\t\tDuration\tPrice\n";
-            std::cout << "---------------------------------------------------\n";
-            
-            auto movies = split(parts[1], ';');
-            for (const auto& movie_str : movies) {
-                if (!movie_str.empty()) {
-                    auto movie_parts = split(movie_str, ':');
-                    if (movie_parts.size() >= 4) {
-                        std::cout << movie_parts[0] << "\t" << movie_parts[1] << "\t\t" 
-                                 << movie_parts[2] << " min\t$" << movie_parts[3] << "\n";
-                    }
-                }
-            }
-            std::cout << std::endl;
-        } else {
-            std::cout << "No movies available.\n";
-        }
-    }
-    
-    void displayShows(int movie_id) {
-        std::string request = "VIEW_SHOWS " + std::to_string(movie_id);
-        std::string response = sendRequest(request);
-        auto parts = split(response, '|');
-        
-        if (parts.size() >= 2 && parts[0] == "SHOWS") {
-            std::cout << "\n=== Available Shows ===\n";
-            std::cout << "Show ID\tDate\t\tTime\tAvailable Seats\n";
-            std::cout << "-------------------------------------------\n";
-            
-            auto shows = split(parts[1], ';');
-            for (const auto& show_str : shows) {
-                if (!show_str.empty()) {
-                    auto show_parts = split(show_str, ':');
-                    if (show_parts.size() >= 4) {
-                        std::cout << show_parts[0] << "\t" << show_parts[1] << "\t" 
-                                 << show_parts[2] << "\t" << show_parts[3] << "\n";
-                    }
-                }
-            }
-            std::cout << std::endl;
-        } else {
-            std::cout << "No shows available for this movie.\n";
-        }
-    }
-    
-    void displaySeats(int show_id) {
-        std::string request = "VIEW_SEATS " + std::to_string(show_id);
-        std::string response = sendRequest(request);
-        auto parts = split(response, '|');
-        
-        if (parts.size() >= 2 && parts[0] == "SEATS") {
-            std::cout << "\n=== Seat Availability ===\n";
-            std::cout << "Seat Number\tStatus\n";
-            std::cout << "-------------------\n";
-            
-            auto seats = split(parts[1], ';');
-            for (const auto& seat_str : seats) {
-                if (!seat_str.empty()) {
-                    auto seat_parts = split(seat_str, ':');
-                    if (seat_parts.size() >= 2) {
-                        std::cout << seat_parts[0] << "\t\t" << seat_parts[1] << "\n";
-                    }
-                }
-            }
-            std::cout << std::endl;
-        } else {
-            std::cout << "No seat information available.\n";
-        }
-    }
-    
-    void bookTickets() {
-        displayMovies();
-        
-        int movie_id;
-        std::cout << "Enter Movie ID: ";
-        std::cin >> movie_id;
-        
-        displayShows(movie_id);
-        
-        int show_id;
-        std::cout << "Enter Show ID: ";
-        std::cin >> show_id;
-        
-        displaySeats(show_id);
-        
-        int num_seats;
-        std::cout << "Enter number of seats to book: ";
-        std::cin >> num_seats;
-        
-        std::vector<int> seat_numbers;
-        std::cout << "Enter seat numbers: ";
-        for (int i = 0; i < num_seats; i++) {
-            int seat_num;
-            std::cin >> seat_num;
-            seat_numbers.push_back(seat_num);
-        }
-        
-        std::string request = "BOOK_TICKETS " + std::to_string(show_id) + " " + std::to_string(num_seats);
-        for (int seat_num : seat_numbers) {
-            request += " " + std::to_string(seat_num);
-        }
-        
-        std::string response = sendRequest(request);
-        auto parts = split(response, '|');
-        
-        if (parts.size() >= 3 && parts[0] == "BOOKING_SUCCESS") {
-            std::cout << "\n=== Booking Successful! ===\n";
-            std::cout << "Booking ID: " << parts[1] << "\n";
-            std::cout << "Total Amount: $" << parts[2] << "\n";
-            std::cout << "Thank you for booking with us!\n\n";
-        } else {
-            std::cout << "Booking failed! Seats may already be booked.\n\n";
-        }
-    }
-    
-    void viewMyBookings() {
-        std::string response = sendRequest("MY_BOOKINGS");
-        auto parts = split(response, '|');
-        
-        if (parts.size() >= 2 && parts[0] == "MY_BOOKINGS") {
-            std::cout << "\n=== My Bookings ===\n";
-            std::cout << "Booking ID\tMovie\t\tDate\t\tTime\tSeats\tAmount\n";
-            std::cout << "---------------------------------------------------------------\n";
-            
-            auto bookings = split(parts[1], ';');
-            for (const auto& booking_str : bookings) {
-                if (!booking_str.empty()) {
-                    auto booking_parts = split(booking_str, ':');
-                    if (booking_parts.size() >= 6) {
-                        std::cout << booking_parts[0] << "\t\t" << booking_parts[1] << "\t" 
-                                 << booking_parts[2] << "\t" << booking_parts[3] << "\t" 
-                                 << booking_parts[4] << "\t$" << booking_parts[5] << "\n";
-                    }
-                }
-            }
-            std::cout << std::endl;
-        } else {
-            std::cout << "No bookings found.\n";
-        }
-    }
-    
-    void clientMenu() {
-        int choice;
-        
-        while (true) {
-            std::cout << "\n=== Client Menu ===\n";
-            std::cout << "1. View Movies\n";
-            std::cout << "2. Book Tickets\n";
-            std::cout << "3. View My Bookings\n";
-            std::cout << "4. Logout\n";
-            std::cout << "Enter choice: ";
-            std::cin >> choice;
-            
-            switch (choice) {
-                case 1:
-                    displayMovies();
-                    break;
-                case 2:
-                    bookTickets();
-                    break;
-                case 3:
-                    viewMyBookings();
-                    break;
-                case 4:
-                    return;
-                default:
-                    std::cout << "Invalid choice!\n";
-            }
-        }
-    }
-    
-    void adminMenu() {
-        int choice;
-        
-        while (true) {
-            std::cout << "\n=== Admin Menu ===\n";
-            std::cout << "1. View Movies\n";
-            std::cout << "2. Add Movie\n";
-            std::cout << "3. Add Show\n";
-            std::cout << "4. View All Bookings\n";
-            std::cout << "5. Logout\n";
-            std::cout << "Enter choice: ";
-            std::cin >> choice;
-            
-            switch (choice) {
-                case 1:
-                    displayMovies();
-                    break;
-                case 2:
-                    addMovie();
-                    break;
-                case 3:
-                    addShow();
-                    break;
-                case 4:
-                    viewAllBookings();
-                    break;
-                case 5:
-                    return;
-                default:
-                    std::cout << "Invalid choice!\n";
-            }
-        }
-    }
-    
-    void addMovie() {
-        std::cin.ignore(); // Clear input buffer
-        std::string movie_name;
-        int duration;
-        double price;
-        
-        std::cout << "Enter movie name (use _ for spaces): ";
-        std::getline(std::cin, movie_name);
-        
-        // Replace spaces with underscores for transmission
-        for (auto& c : movie_name) {
-            if (c == ' ') c = '_';
-        }
-        
-        std::cout << "Enter duration (minutes): ";
-        std::cin >> duration;
-        
-        std::cout << "Enter ticket price: $";
-        std::cin >> price;
-        
-        std::string request = "ADD_MOVIE " + movie_name + " " + std::to_string(duration) + " " + std::to_string(price);
-        std::string response = sendRequest(request);
-        
-        if (response == "MOVIE_ADDED_SUCCESS") {
-            std::cout << "Movie added successfully!\n";
-        } else {
-            std::cout << "Failed to add movie!\n";
-        }
-    }
-    
-    void addShow() {
-        displayMovies();
-        
-        int movie_id, total_seats;
-        std::string date, time;
-        
-        std::cout << "Enter Movie ID: ";
-        std::cin >> movie_id;
-        
-        std::cout << "Enter show date (YYYY-MM-DD): ";
-        std::cin >> date;
-        
-        std::cout << "Enter show time (HH:MM): ";
-        std::cin >> time;
-        
-        std::cout << "Enter total seats: ";
-        std::cin >> total_seats;
-        
-        std::string request = "ADD_SHOW " + std::to_string(movie_id) + " " + date + " " + time + " " + std::to_string(total_seats);
-        std::string response = sendRequest(request);
-        
-        if (response == "SHOW_ADDED_SUCCESS") {
-            std::cout << "Show added successfully!\n";
-        } else {
-            std::cout << "Failed to add show!\n";
-        }
-    }
-    
-    void viewAllBookings() {
-        std::string response = sendRequest("ALL_BOOKINGS");
-        auto parts = split(response, '|');
-        
-        if (parts.size() >= 2 && parts[0] == "ALL_BOOKINGS") {
-            std::cout << "\n=== All Bookings ===\n";
-            std::cout << "Booking ID\tUser ID\tMovie\t\tDate\t\tTime\tSeats\tAmount\n";
-            std::cout << "-----------------------------------------------------------------------\n";
-            
-            auto bookings = split(parts[1], ';');
-            for (const auto& booking_str : bookings) {
-                if (!booking_str.empty()) {
-                    auto booking_parts = split(booking_str, ':');
-                    if (booking_parts.size() >= 7) {
-                        std::cout << booking_parts[0] << "\t\t" << booking_parts[1] << "\t" 
-                                 << booking_parts[2] << "\t" << booking_parts[3] << "\t" 
-                                 << booking_parts[4] << "\t" << booking_parts[5] << "\t$" 
-                                 << booking_parts[6] << "\n";
-                    }
-                }
-            }
-            std::cout << std::endl;
-        } else {
-            std::cout << "No bookings found.\n";
-        }
-    }
-    
-public:
-    MovieBookingClient(const std::string& ip = "127.0.0.1", int port = 8080) 
-        : server_ip(ip), server_port(port), user_id(0), user_type(CLIENT), is_authenticated(false) {
-    }
-    
-    ~MovieBookingClient() {
-        disconnect();
-        WSACleanup();
-    }
-    
-    bool connect() {
-        // Initialize Winsock
-        WSADATA wsaData;
-        int result = WSAStartup(MAKEWORD(2, 2), &wsaData);
-        if (result != 0) {
-            std::cerr << "WSAStartup failed: " << result << std::endl;
-            return false;
-        }
-        
-        // Create socket
-        client_socket = socket(AF_INET, SOCK_STREAM, 0);
-        if (client_socket == INVALID_SOCKET) {
-            std::cerr << "Socket creation failed: " << WSAGetLastError() << std::endl;
-            WSACleanup();
-            return false;
-        }
-        
-        // Setup server address
-        sockaddr_in server_addr;
-        server_addr.sin_family = AF_INET;
-        server_addr.sin_port = htons(server_port);
-        inet_pton(AF_INET, server_ip.c_str(), &server_addr.sin_addr);
-        
-        // Connect to server
-        if (::connect(client_socket, (sockaddr*)&server_addr, sizeof(server_addr)) == SOCKET_ERROR) {
-            std::cerr << "Connection failed: " << WSAGetLastError() << std::endl;
-            closesocket(client_socket);
-            WSACleanup();
-            return false;
-        }
-        
-        std::cout << "Connected to server at " << server_ip << ":" << server_port << std::endl;
-        return true;
-    }
-    
-    void disconnect() {
-        if (client_socket != INVALID_SOCKET) {
-            closesocket(client_socket);
-            client_socket = INVALID_SOCKET;
-        }
-    }
-    
-    bool login() {
-        std::string username, password;
-        
-        std::cout << "\n=== Login ===\n";
-        std::cout << "Username: ";
-        std::cin >> username;
-        std::cout << "Password: ";
-        std::cin >> password;
-        
-        std::string request = "LOGIN " + username + " " + password;
-        std::string response = sendRequest(request);
-        
-        auto parts = split(response, '|');
-        if (parts.size() >= 3 && parts[0] == "LOGIN_SUCCESS") {
-            user_id = std::stoi(parts[1]);
-            user_type = (parts[2] == "ADMIN") ? ADMIN : CLIENT;
-            is_authenticated = true;
-            
-            std::cout << "Login successful! Welcome " << username << " (" 
-                     << (user_type == ADMIN ? "Admin" : "Client") << ")\n";
-            return true;
-        } else {
-            std::cout << "Login failed! Invalid credentials.\n";
-            return false;
-        }
-    }
-    
-    void run() {
-        if (!connect()) {
-            std::cout << "Failed to connect to server!\n";
-            return;
-        }
-        
-        std::cout << "\n=== Movie Ticket Booking System ===\n";
-        std::cout << "Default users: admin/admin123 (Admin), user/user123 (Client)\n";
-        
-        if (login()) {
-            if (user_type == ADMIN) {
-                adminMenu();
-            } else {
-                clientMenu();
-            }
-        }
-        
-        disconnect();
-    }
+using namespace std;
+int limituser=2;
+
+// string Usrid;//global (will be updated in logn_signup function )
+char Usrid[50];
+string which_platform="M";//m=>movie
+
+sem_t* sem1 = sem_open("usr_signup", 0, 0666, 1);//client_admin
+sem_t* sem2 = sem_open("movie",0, 0666, 1);
+
+
+// Note: changed to an IPv4 example; replace with the actual IPv4 address of your admin server.
+// const char* AdminserverIP = "2409:408a:1c35:1a95:1605:8d49:c21f:f3d1";  // Replace with the desired IPv6 address
+const char* AdminserverIP = "127.0.0.1";  // Replace with the desired IPv4 address
+const int serverAdmin_client_login= 12346;
+const int serverAdmin_client_other= 12347;
+
+struct Person {
+    char id[50];
+    int curr_bal;
+    int total_spend;
 };
 
-int main() {
-    MovieBookingClient client;
-    client.run();
+class UserData{
+    public:
+    char username[50];
+    char password[50];
+};
+
+class Movie{
+    public:
+    char name[10];
+    char lang[10];
+    int rating;
+    int cost;
+};
+
+const int movienum=6;//give choice to admin to add movie ...by default 3 is there but space for 6 is considered
+int hall[9][9];
+Movie movie[movienum];
+
+int  login_signup_user(){
+
+    int option;
+    cout << "1. Login\n2. Signup" << endl;
+    cin >> option;
+    cout<<option<<"\n";
+    if (option == 1) {
+        char username[50];
+        char password[50];
+        cout << "username: ";
+        cin >> username;
+        cout << "Password: ";
+        cin >> password;
+        strcpy(Usrid,username);
+        bool loggedIn = false;
+
+        // for (int i = 0; i < limituser; i++) {
+        //     if (strcmp(username, user_data[i].username) == 0 && strcmp(password, user_data[i].password) == 0) {
+        //         cout << "Login success." << endl;
+        //         loggedIn = true;
+        //         break;
+        //     }
+        // }
+
+        // if (!loggedIn) {
+        //     cout << "Invalid credentials.UserId or Passward is incorrect." << endl;
+        //     return 0;
+        //    }
+        } 
+    else if (option == 2) {
+        // Changed socket to IPv4
+        int clientSocket = socket(AF_INET, SOCK_STREAM, 0);
+
+        // Connect to server using the public IPv4 address
+        struct sockaddr_in serverAddr;
+        serverAddr.sin_family = AF_INET;
+        serverAddr.sin_port = htons(serverAdmin_client_login); // Use the same port as the server
+
+        if (inet_pton(AF_INET, AdminserverIP, &serverAddr.sin_addr) != 1) {
+            std::cerr << "Invalid IPv4 address." << std::endl;
+            return EXIT_FAILURE;
+        }
+
+        if (connect(clientSocket, (struct sockaddr*)&serverAddr, sizeof(serverAddr)) == -1) {
+            perror("Connect error");
+            return EXIT_FAILURE;
+        }
+        
+        char newusername[50];
+        char newPassword[50];
+        
+        bool usernameExists = false;
+
+        cout << "Enter a new username: ";
+       
+        cin >> newusername;
+        strcpy(Usrid,newusername);
+        // // Check if the username already exists
+        // sem_wait(sem1);
+        // for (int i = 0; i <limituser; i++) {
+        //     if (strcmp(newusername, user_data[i].username) == 0) {
+        //         usernameExists = true;
+        //         break;
+        //     }
+        // }
+        // sem_post(sem1);
+
+        int r=1;
+        if (usernameExists) {
+            cout << "This username already exists. Try a different one." << endl;
+            r=0;
+        } 
+        else {
+            cout << "Enter a new password: ";
+            cin >> newPassword;
+        
+            // sem_wait(sem1);
+            // for (int i = 0; i <limituser; i++) {
+            //     if (strlen(user_data[i].username) == 0) {
+            //         strcpy(user_data[i].username, newusername);
+            //         strcpy(user_data[i].password, newPassword);
+            //         cout << "User Signup successful." << endl;
+            //         r=1;
+            //         break;
+            //     }
+            // }
+            // sem_post(sem1);
+
+            UserData userdata;
+            strcpy(userdata.username,newusername);
+            strcpy(userdata.password,newPassword);
+            send(clientSocket, &userdata, sizeof(userdata), 0);
+
+            // Receive data from the server
+            char buffer[1024] = {0};
+            ssize_t bytesReceived = recv(clientSocket, buffer, sizeof(buffer), 0);
+
+            if (bytesReceived <= 0) {
+                // Connection closed or error
+                close(clientSocket);
+                // break; // Exit the loop and terminate the client
+                return 0;
+            }
+
+            std::cout << "Message from server: " << buffer << std::endl;
+
+            // Sleep for a while to simulate some processing
+            //  usleep(1000000); // Sleep for 1 second (adjust as needed)
+            close(clientSocket);
+            }
+            if(r==0)
+            cout<<"Server is Overloaded , Try after sometime !!!";
+        
+            return r;
+    }
+    return 1;
+}
+void list_all_Movies(int num,int clientSocket){
+
+    const char* requestType = "1"; // Change this to test different request types
+    send(clientSocket, requestType, strlen(requestType), 0);
+
+    // Receive and print the item from the server
+    // char buffer[1024];
+    // Movie movie[movienum];
+    ssize_t bytesReceived = recv(clientSocket,&movie, sizeof(movie), 0);
+
+    if (bytesReceived > 0) {
+        // buffer[bytesReceived] = '\0';
+        cout << "Received Item: " << endl;
+    } else {
+        cerr << "Error receiving item from the server." << endl;
+    }
+
+    int i=0;
+    while(movie[i].rating!=0){
+      cout<<"\t\t\tMovie "<<i+1<<":\n";
+      cout<<"Name: "<<movie[i].name<<"\n";
+      cout<<"In:"<<movie[i].lang<<"\n";
+      cout<<"Rating: "<<movie[i].rating<<"\n";
+      cout<<"Price: "<<movie[i].cost<<"\n";
+      i++;
+      cout<<"\n";
+    }
+}
+void showseat(int clientSocket){
+
+    const char* requestType = "2"; // Change this to test different request types
+    send(clientSocket, requestType, strlen(requestType), 0);
+
+    // Receive and print the item from the server
+    // char buffer[1024];
+        // int hall[9][9];
+
+
+    char rechall[sizeof(hall)];
+    ssize_t updatedhall = recv(clientSocket, rechall, sizeof(rechall), 0);
+    if (updatedhall > 0) {
+        std::memcpy(hall, rechall, sizeof(hall));
+        // Now 'hall' on the server side is updated.
+    } else {
+        std::cerr << "Error receiving data from the client." << std::endl;
+    }
+
+    if(which_platform=="M"){
+        cout<<"--------------Screen-------------------\n\n";
+
+        cout<<"-------------PREMIUM------------------\n";
+        for(int i=0;i<9;i++){
+            for(int j=0;j<9;j++)
+            {
+                if(hall[i][j]==1){
+                cout<<i<<j<<" ";
+                }
+                else{
+                    cout<<" * ";
+                }
+                if(j==1||j==6)cout<<"   ";
+            }
+            cout<<"\n";
+            if(i==2||i==6){
+                if(i==2)
+                cout<<"-------------BUSINESS------------------";
+                else
+                cout<<"-------------ECONOMY-------------------";
+                cout<<"\n";
+            }
+    }
+    cout<<"\n";
+    }
+    // else if(which_platform=="S")
+    // stadium();
+}
+int selectseat(int clientSocket,string &which_seats,vector<int>&seat){
+
+    int cost_per_seat=50;// to be changed further // dynamic // G/S/T seats ...diff cost 
+    int ts=seat.size();
+
+    for(int i=0;i<ts;i++){
+       cout<<"Seat "<<i+1<<" : ";
+       cin>>seat[i];
+        if(hall[seat[i]/10][seat[i]%10]==-1){
+            cout<<"Seat :"<<seat[i]<<" is already booked !!! Choose other seats!!!\n";
+            i--;
+            seat[i]=-1;
+            continue;
+        }
+        else{
+            hall[seat[i]/10][seat[i]%10]=-1;
+        }
+        which_seats=which_seats+" "+to_string(seat[i]);
+    }
+
+    const char* requestType = "3"; // Change this to test different request types
+    send(clientSocket, requestType, strlen(requestType), 0);
+    int book[10];
+
+    for(int i=0;i<10;i++)
+    if(i<seat.size())
+    book[i]=seat[i];
+    else
+    book[i]=-1;
+
+    send(clientSocket, &book,sizeof(book), 0);
     
+    return ts*cost_per_seat;
+    
+}
+void update_transaction(int clientSocket,int spend,Person *person){
+    
+   const char* requestType = "4"; // Change this to test different request types
+   send(clientSocket, requestType, strlen(requestType), 0);
+
+   int counter=0;
+   recv(clientSocket,&counter,sizeof(counter),0);
+
+   if(counter==1)
+   ssize_t bytesSent= send(clientSocket,Usrid, sizeof(Usrid), 0);
+
+    int initial_amt;
+    
+    ssize_t rec=recv(clientSocket,&initial_amt,sizeof(initial_amt),0);
+  
+
+    int final_amt=initial_amt-spend;
+   
+     
+    // write intial_amt and spend in shared memory 
+    // cout<<"Here\n";
+    strcpy(person[0].id,Usrid);
+    // strncpy(person[0].id, Usrid, sizeof(person[0].id) - 1);
+    // person[0].id[sizeof(person[0].id) - 1] = '\0';  // Ensure null-termination
+    person[0].curr_bal=initial_amt;
+    person[0].total_spend=spend;
+
+    // cout<<person[0].id<<"\n";
+
+
+    if(final_amt<0)
+    final_amt=0;
+
+    // recv(clientSocket,&counter,sizeof(counter),0);
+    // if(counter==2)
+
+    send(clientSocket,&final_amt,sizeof(final_amt), 0);
+   
+   
+}
+int payment(int curr_spend,Person *person){
+    // sem_wait(sem2);
+    system("x-terminal-emulator");
+
+    // new terminal will be opened ... here run payment.cpp
+    // not only this program will be pausee here to do further work unit the opened terminl is close using exit 
+
+    int gen_ticket=0;
+    // ifstream infile("Curr_tranctions.txt");
+    // if (infile.is_open()) {
+    //     while (infile) {
+    //         Person person;
+    //         infile >> person.id >> person.total_spend;
+    //         if (infile) {
+    //             if(person.id==Usrid){
+    //                 if(person.total_spend>0){
+    //                     gen_ticket=1;
+    //                     break;
+    //                 }
+    //             }
+    //         }
+    //     }
+    //     infile.close();
+    // } 
+    // else cerr << "Unable to open the file for reading." << endl;
+    if(person[0].total_spend>0)
+    gen_ticket=1;
+    // sem_post(sem2);
+    return gen_ticket;
+}
+void generate_ticket(int amt,string movie,string day,string tme, int no_of_seats,string which_seats,int hall_no,string screen){
+    time_t now = time(0);
+    tm* today = localtime(&now);
+    time_t tomorrow = now + 24 * 60 * 60; // Add 24 hours in seconds
+    tm* tmorrow = localtime(&tomorrow);
+    time_t dayAfterTomorrow = tomorrow + 24 * 60 * 60; // Add another 24 hours
+    tm* dayAfterTmrw = localtime(&dayAfterTomorrow);
+
+    cout<<"================================Choose Date:=================================\n";
+    cout<<"\t 1. 7/12/23\t    2. 8/12/23\t    3. 9/12/23\n";
+    int d;cin>>d;
+    string dt;
+    if(d==1)dt="7/12/23";
+    else if(d==2)dt="8/12/23";
+    else dt="9/12/23";
+    cout<<"==============================Select TimeSlot:================================\n";
+    cout<<"A: 9:00 \tB: 11:00\tC: 13:00\n";
+    cout<<"D: 15:00 \tE: 17:00\tF: 19:00\n";
+    cout<<"G: 21:00 \tH: 23:00\tI: 23:30\n";
+    char t;cin>>t;
+    vector<string>v1={"9:00","11:00","13:00","15:00","17:00","19:00","21:00","23:00","23:30"};
+    tme=v1[t-65];
+    string today2,tommorow,dayaftrtom;
+    if(d==1)today2=day=to_string(today->tm_mon + 1) + "/" + to_string(today->tm_mday) + "/" + to_string(today->tm_year + 1900);
+    else if(d==2)tommorow=day=to_string(tmorrow->tm_mon + 1) + "/" + to_string(tmorrow->tm_mday) + "/" + to_string(tmorrow->tm_year + 1900);
+    else dayaftrtom=day=to_string(dayAfterTmrw->tm_mon + 1) + "/" + to_string(dayAfterTmrw->tm_mday) + "/" + to_string(dayAfterTmrw->tm_year + 1900);
+    
+    // cout<<"Congratulations !!! Your Ticket has been booked\n\n";
+    // cout<<"Movie : "<<movie<<"\n";
+    // cout<<"Date : "<<day<<"\n";
+    // cout<<"Time : "<<tme<<"\n";
+    // cout<<"Hall : "<<hall_no<<"  "<<"Screen : "<<screen<<"\n";
+    // cout<<"Seat : "<<no_of_seats<<"("<<which_seats<<")"<<"\n";
+    // cout<<"\n";
+
+    cout<<"***************************************************************************\n";
+   
+    cout<<"|\n";
+    cout<<"|"<< " Congratulations!!! Your tickets have been booked.\n"; 
+    cout<<"|\n";
+    cout<<"| DETAILS:\n"; 
+    cout<<"| MOVIE: "<<movie<<"\n";
+    cout<<"| DATE: "<<dt<<"\n";
+    cout<<"| TIME:"<<tme<<"\n";
+    cout<<"| HALL: "<< hall_no<<"  Screen: "<<screen<<"\n";
+    cout<<"| SEAT: "<<no_of_seats<<"("<<which_seats<<")"<<"\n";
+    cout<<"***************************************************************************\n";
+
+}
+int terminator(int clientSocket,Person* person,int shmid){
+    cout<<"Have a Nice Day !!\nDo visit again!!!!\n";
+    shmdt(person);
+    shmctl(shmid, IPC_RMID, NULL);
+    close(clientSocket);
     return 0;
+}
+void release_seats(int clientSocket,vector<int>&seat){
+ 
+    const char* requestType = "5"; // Change this to test different request types
+    send(clientSocket, requestType, strlen(requestType), 0);
+    
+    int book[10];
+
+    for(int i=0;i<10;i++)
+    if(i<seat.size())
+    book[i]=seat[i];
+    else
+    book[i]=-1;
+
+    send(clientSocket, &book,sizeof(book), 0);
+    
+}
+
+int main() {
+
+    // const char* serverIP = "409:4064:2593:8c15:e731:d117:3a0a:b988";  // Replace with the desired IPv6 address
+    // const int serverPort = 12347;
+
+    // Create socket for IPv4
+    int clientSocket = socket(AF_INET, SOCK_STREAM, 0);
+
+    // Connect to the server
+    struct sockaddr_in serverAddr;
+    serverAddr.sin_family = AF_INET;
+    serverAddr.sin_port = htons(serverAdmin_client_other);
+
+    if (inet_pton(AF_INET,AdminserverIP, &serverAddr.sin_addr) != 1) {
+        std::cerr << "Invalid IPv4 address." << std::endl;
+        return EXIT_FAILURE;
+    }
+
+    if (connect(clientSocket, (struct sockaddr*)&serverAddr, sizeof(serverAddr)) == -1) {
+        perror("Connect error");
+        return EXIT_FAILURE;
+    }
+
+    
+    // key_t key = ftok("/tmp", 'C');
+    // int shmid = shmget(key, sizeof(UserData) * limituser, 0666);
+    // UserData* user_data = (UserData*)shmat(shmid, NULL, 0);
+
+    int movienum=6;//give choice to admin to add movie ...by default 3 is there but space for 6 is considered
+    
+    // key_t key3 = ftok("/tmp", 'M');//movie client-admin(creater)
+    // int shmid3 = shmget(key3, sizeof(Movie) * movienum, 0666);
+    // Movie* movie = (Movie*)shmat(shmid3, NULL, 0);
+
+
+    key_t key = ftok("/tmp", 'P');//movie client-admin(creater)
+    int shmid = shmget(key, sizeof(Person)*3, IPC_CREAT | 0666);
+    Person* person = (Person*)shmat(shmid, NULL, 0);
+     
+    int status=1,final_status=1;
+
+    status=login_signup_user();  //1
+    //  cout<<"i am here1\n";
+    if(status==0){
+        //  cout<<"i am here2\n";
+         final_status=login_signup_user();  //1
+    }
+    // else if(status==-1)return terminator(user_data,movie);
+         
+    // if(final_status==0||final_status==-1){
+    //     cout<<"Too many unsuccessful attempts \n";
+    //      return terminator(user_data,movie);
+    // }
+    
+    int choice=0;
+    int which;
+    int final_amt=0;///update this as per dynamic pricing  
+
+    // sem_wait(sem2);
+    list_all_Movies(movienum,clientSocket); //2
+    // // sleep(30);
+    // sem_post(sem2);
+
+    int index=0,num_seats=0,hall_no=3;string name,date,time,screen="A2",which_seats="";
+    cout<<"Enter the index of the movie to be selected :";
+    cin>>index;
+
+    // sem_wait(sem2);
+    final_amt+=movie[index-1].cost;
+    name=movie[index-1].name;
+    name=name+"( "+movie[index-1].lang+" )";
+    // sem_post(sem2);
+
+    showseat(clientSocket); //3
+    
+
+    // calculat ethe ammount according to movie selected and seat quality 
+    // now write this data into file with userid(unique) in form userid: cost(currecnt transaction /last tranction );
+    // apply all the dynamic pricing and all policies here to manipulate the price
+     
+    cout<<"Total seats to be booked :";
+    cin>>num_seats; 
+    vector<int>seat(num_seats,0);
+    final_amt+=selectseat(clientSocket,which_seats,seat);  //4
+    int gen_ticket=-1;
+      
+    // update_transaction(clientSocket,final_amt); //5
+    
+    if(num_seats!=0){
+    //    cout<<"amt : "<<final_amt<<"\n";
+       update_transaction(clientSocket,final_amt,person); //5
+       cout<<"\n1. Press P to continue to the Payment Gateway !!\n2. Press A to abort Transaction\n";
+       char c;cin>>c;
+       int release=0;
+       if(c=='P')
+           gen_ticket=payment(final_amt,person); //6
+       else{
+            release_seats(clientSocket,seat);
+       }
+      }// if user has booked some seats
+    
+    if(gen_ticket==1){
+        generate_ticket(final_amt,name," 7 December 2023","3:00 PM",num_seats,which_seats,hall_no,screen); //7
+    }//generate ticket 
+    else if(num_seats!=0&& gen_ticket==0){//abort tranction 
+        cout<<"Recharge Your Wallet\n";
+            }
+
+    return terminator(clientSocket,person,shmid);
+
+
 }
